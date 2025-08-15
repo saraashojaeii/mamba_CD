@@ -37,7 +37,7 @@ def set_all_seeds(seed):
 # Parse experiment-level arguments early
 parser = argparse.ArgumentParser(description='Cascade CD Training')
 parser.add_argument('--model', type=str, default='mamba', help='Model name for run naming')
-parser.add_argument('--dataset', type=str, default='unknown', help='Dataset name for run naming')
+parser.add_argument('--dataset', type=str, default='second', help='Dataset name for run naming')
 parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
 parser.add_argument('--tag', type=str, default='', help='Optional custom tag for run naming')
 args, unknown = parser.parse_known_args()
@@ -458,6 +458,10 @@ if __name__ == '__main__':
                     
                     # Log masks to wandb (log only for the first batch of each epoch to avoid excessive logging)
                     if current_step == 0 and current_epoch % 1 == 0:
+                        # Convert input images from normalized [-1, 1] to [0, 255] for visualization
+                        img_t1 = Metrics.tensor2img(train_data['A'][0:1], out_type=np.uint8, min_max=(-1, 1))
+                        img_t2 = Metrics.tensor2img(train_data['B'][0:1], out_type=np.uint8, min_max=(-1, 1))
+                        
                         # Handle ground truth masks - check if they're already RGB or need color mapping
                         seg_t1_np = seg_t1[0].detach().cpu().numpy()
                         seg_t2_np = seg_t2[0].detach().cpu().numpy()
@@ -483,6 +487,12 @@ if __name__ == '__main__':
                         else:
                             gt_seg_t2_img = create_color_mask(seg_t2[0], num_classes=opt['model']['n_classes'])
                         
+                        # Create binary change ground truth (black=0, white=255)
+                        change_gt_binary = ((change[0] > 0).float().detach().cpu().numpy() * 255).astype(np.uint8)
+                        
+                        # Create binary change prediction (black=0, white=255)
+                        pred_change_binary = ((pred_change[0] > 0).detach().cpu().numpy() * 255).astype(np.uint8)
+                        
                         # Also log probability maps for debugging
                         seg_t1_probs = torch.softmax(seg_logits_t1[0], dim=0)
                         seg_t2_probs = torch.softmax(seg_logits_t2[0], dim=0)
@@ -491,20 +501,30 @@ if __name__ == '__main__':
                         # Create probability visualizations (show max probability across classes)
                         seg_t1_max_prob = torch.max(seg_t1_probs, dim=0)[0].detach().cpu().numpy()
                         seg_t2_max_prob = torch.max(seg_t2_probs, dim=0)[0].detach().cpu().numpy()
-                        change_max_prob = torch.max(change_probs, dim=0)[0].detach().cpu().numpy()
                         
-                        # For change, visualize as 2-class (class-1 prob heatmap + argmax)
+                        # For change, visualize class-1 probability
                         change_prob = change_probs[1].detach().cpu().numpy()
+                        
                         wandb.log({
+                            # Input images
+                            "train/input_t1": [wandb.Image(img_t1, caption="Input Image T1")],
+                            "train/input_t2": [wandb.Image(img_t2, caption="Input Image T2")],
+                            
+                            # Predictions with consistent color mapping
                             "train/pred_seg_t1": [wandb.Image(create_color_mask(pred_seg_t1[0], num_classes=opt['model']['n_classes']), caption="Pred Seg T1 (multi-class)")],
                             "train/pred_seg_t2": [wandb.Image(create_color_mask(pred_seg_t2[0], num_classes=opt['model']['n_classes']), caption="Pred Seg T2 (multi-class)")],
-                            "train/pred_change": [wandb.Image(create_color_mask(pred_change[0], num_classes=2), caption="Pred Change (binary)")],
+                            "train/pred_change": [wandb.Image(pred_change_binary, caption="Pred Change (binary BW)")],
+                            
+                            # Probability maps
                             "train/pred_seg_t1_prob": [wandb.Image(seg_t1_max_prob, caption="Pred Seg T1 Max Probability")],
                             "train/pred_seg_t2_prob": [wandb.Image(seg_t2_max_prob, caption="Pred Seg T2 Max Probability")],
                             "train/pred_change_prob": [wandb.Image(change_prob, caption="Pred Change Class-1 Probability")],
+                            
+                            # Ground truths with consistent color mapping
                             "train/gt_seg_t1": [wandb.Image(gt_seg_t1_img, caption="GT Seg T1")],
                             "train/gt_seg_t2": [wandb.Image(gt_seg_t2_img, caption="GT Seg T2")],
-                            "train/gt_change": [wandb.Image(((change[0] > 0).float().detach().cpu().numpy() * 255).astype(np.uint8), caption="GT Change (binary BW)")],
+                            "train/gt_change": [wandb.Image(change_gt_binary, caption="GT Change (binary BW)")],
+                            
                             "global_step": current_epoch * len(train_loader) + current_step
                         })
 
@@ -544,6 +564,11 @@ if __name__ == '__main__':
                     print(f"seg_logits_t1 shape: {seg_logits_t1.shape}, min: {seg_logits_t1.min():.4f}, max: {seg_logits_t1.max():.4f}")
                     print(f"seg_logits_t2 shape: {seg_logits_t2.shape}, min: {seg_logits_t2.min():.4f}, max: {seg_logits_t2.max():.4f}")
                     print(f"change_pred shape: {change_pred.shape}, min: {change_pred.min():.4f}, max: {change_pred.max():.4f}")
+                    
+                    # Convert input images from normalized [-1, 1] to [0, 255] for visualization
+                    img_t1 = Metrics.tensor2img(train_data['A'][0:1], out_type=np.uint8, min_max=(-1, 1))
+                    img_t2 = Metrics.tensor2img(train_data['B'][0:1], out_type=np.uint8, min_max=(-1, 1))
+                    
                     # Handle ground truth masks - check if they're already RGB or need color mapping
                     seg_t1_np = seg_t1[0].detach().cpu().numpy()
                     seg_t2_np = seg_t2[0].detach().cpu().numpy()
@@ -571,13 +596,40 @@ if __name__ == '__main__':
                     
                     # Prepare binary GT change as black/white image
                     train_gt_change_bw = ((change[0] > 0).float().detach().cpu().numpy() * 255).astype(np.uint8)
+                    
+                    # Prepare binary prediction change as black/white image
+                    pred_change_binary = ((pred_change[0] > 0).detach().cpu().numpy() * 255).astype(np.uint8)
+                    
+                    # Also log probability maps for debugging
+                    seg_t1_probs = torch.softmax(seg_logits_t1[0], dim=0)
+                    seg_t2_probs = torch.softmax(seg_logits_t2[0], dim=0)
+                    change_probs = torch.softmax(change_pred[0], dim=0)
+                    
+                    # Create probability visualizations
+                    seg_t1_max_prob = torch.max(seg_t1_probs, dim=0)[0].detach().cpu().numpy()
+                    seg_t2_max_prob = torch.max(seg_t2_probs, dim=0)[0].detach().cpu().numpy()
+                    change_prob = change_probs[1].detach().cpu().numpy()
+                    
                     wandb.log({
+                        # Input images
+                        "train/input_t1": [wandb.Image(img_t1, caption="Input Image T1")],
+                        "train/input_t2": [wandb.Image(img_t2, caption="Input Image T2")],
+                        
+                        # Predictions with consistent color mapping
                         "train/pred_seg_t1": [wandb.Image(create_color_mask(pred_seg_t1[0], num_classes=num_classes), caption="Pred Seg T1 (multi-class)")],
                         "train/pred_seg_t2": [wandb.Image(create_color_mask(pred_seg_t2[0], num_classes=num_classes), caption="Pred Seg T2 (multi-class)")],
-                        "train/pred_change": [wandb.Image(create_color_mask(pred_change[0], num_classes=2), caption="Pred Change (binary)")],
+                        "train/pred_change": [wandb.Image(pred_change_binary, caption="Pred Change (binary BW)")],
+                        
+                        # Probability maps
+                        "train/pred_seg_t1_prob": [wandb.Image(seg_t1_max_prob, caption="Pred Seg T1 Max Probability")],
+                        "train/pred_seg_t2_prob": [wandb.Image(seg_t2_max_prob, caption="Pred Seg T2 Max Probability")],
+                        "train/pred_change_prob": [wandb.Image(change_prob, caption="Pred Change Class-1 Probability")],
+                        
+                        # Ground truths with consistent color mapping
                         "train/gt_seg_t1": [wandb.Image(gt_seg_t1_img, caption="GT Seg T1")],
                         "train/gt_seg_t2": [wandb.Image(gt_seg_t2_img, caption="GT Seg T2")],
                         "train/gt_change": [wandb.Image(train_gt_change_bw, caption="GT Change (binary BW)")],
+                        
                         "global_step": current_epoch * len(train_loader) + current_step
                     })
                 
@@ -798,6 +850,10 @@ if __name__ == '__main__':
                         print(f"val_seg_logits_t2 shape: {val_seg_logits_t2.shape}, min: {val_seg_logits_t2.min():.4f}, max: {val_seg_logits_t2.max():.4f}")
                         print(f"val_change_pred shape: {val_change_pred.shape}, min: {val_change_pred.min():.4f}, max: {val_change_pred.max():.4f}")
                         
+                        # Convert input images from normalized [-1, 1] to [0, 255] for visualization
+                        val_img_t1 = Metrics.tensor2img(val_data['A'][0:1], out_type=np.uint8, min_max=(-1, 1))
+                        val_img_t2 = Metrics.tensor2img(val_data['B'][0:1], out_type=np.uint8, min_max=(-1, 1))
+                        
                         # Handle ground truth masks same as training
                         val_seg_t1_np = val_seg_t1[0].detach().cpu().numpy()
                         val_seg_t2_np = val_seg_t2[0].detach().cpu().numpy()
@@ -827,6 +883,9 @@ if __name__ == '__main__':
                             val_change_bin_vis = normalize_change_target(val_seg_t1, val_seg_t2, val_change)
                         val_gt_change_bw = ((val_change_bin_vis[0] > 0).float().detach().cpu().numpy() * 255).astype(np.uint8)
                         
+                        # Create binary change prediction (black=0, white=255)
+                        val_pred_change_binary = ((val_pred_change[0] > 0).detach().cpu().numpy() * 255).astype(np.uint8)
+                        
                         # Also log probability maps for validation debugging
                         val_seg_t1_probs = torch.softmax(val_seg_logits_t1[0], dim=0)
                         val_seg_t2_probs = torch.softmax(val_seg_logits_t2[0], dim=0)
@@ -838,15 +897,32 @@ if __name__ == '__main__':
                         val_change_prob = val_change_probs[1].detach().cpu().numpy()
                         
                         wandb.log({
+                            # Input images
+                            "val/input_t1": [wandb.Image(val_img_t1, caption="Val Input Image T1")],
+                            "val/input_t2": [wandb.Image(val_img_t2, caption="Val Input Image T2")],
+                            
+                            # Predictions with consistent color mapping
                             "val/pred_seg_t1": [wandb.Image(create_color_mask(val_pred_seg_t1[0], num_classes=opt['model']['n_classes']), caption="Val Pred Seg T1 (multi-class)")],
                             "val/pred_seg_t2": [wandb.Image(create_color_mask(val_pred_seg_t2[0], num_classes=opt['model']['n_classes']), caption="Val Pred Seg T2 (multi-class)")],
-                            "val/pred_change": [wandb.Image(create_color_mask(val_pred_change[0], num_classes=2), caption="Val Pred Change (binary)")],
+                            "val/pred_change": [wandb.Image(val_pred_change_binary, caption="Val Pred Change (binary BW)")],
+                            
+                            # Probability maps (max prob for each pixel)
                             "val/pred_seg_t1_prob": [wandb.Image(val_seg_t1_max_prob, caption="Val Pred Seg T1 Max Probability")],
                             "val/pred_seg_t2_prob": [wandb.Image(val_seg_t2_max_prob, caption="Val Pred Seg T2 Max Probability")],
                             "val/pred_change_prob": [wandb.Image(val_change_prob, caption="Val Pred Change Class-1 Probability")],
+                            # All-channel probability maps (as grids or composites)
+                            "val/pred_seg_t1_probs": [wandb.Image(np.transpose(val_seg_t1_probs_vis, (1,2,0)), caption="Val Pred Seg T1 Probabilities (all channels)")],
+                            "val/pred_seg_t2_probs": [wandb.Image(np.transpose(val_seg_t2_probs_vis, (1,2,0)), caption="Val Pred Seg T2 Probabilities (all channels)")],
+                            "val/pred_change_probs": [wandb.Image(np.transpose(val_change_probs_vis, (1,2,0)), caption="Val Pred Change Probabilities (all channels)")],
+                            # Entropy maps                            "val/pred_seg_t1_entropy": [wandb.Image(val_seg_t1_entropy, caption="Val Pred Seg T1 Entropy")],
+                            "val/pred_seg_t2_entropy": [wandb.Image(val_seg_t2_entropy, caption="Val Pred Seg T2 Entropy")],
+                            "val/pred_change_entropy": [wandb.Image(val_change_entropy, caption="Val Pred Change Entropy")],
+                            
+                            # Ground truths with consistent color mapping
                             "val/gt_seg_t1": [wandb.Image(val_gt_seg_t1_img, caption="Val GT Seg T1")],
                             "val/gt_seg_t2": [wandb.Image(val_gt_seg_t2_img, caption="Val GT Seg T2")],
                             "val/gt_change": [wandb.Image(val_gt_change_bw, caption="Val GT Change (binary BW)")],
+                            
                             "global_step": current_epoch * len(train_loader) + len(train_loader)
                         })
                     
@@ -917,6 +993,10 @@ if __name__ == '__main__':
 
                     # Optional: log first batch of test predictions (segmentations + probs)
                     if current_step == 0:
+                        # Convert input images from normalized [-1, 1] to [0, 255] for visualization
+                        test_img_t1 = Metrics.tensor2img(test_data['A'][0:1], out_type=np.uint8, min_max=(-1, 1))
+                        test_img_t2 = Metrics.tensor2img(test_data['B'][0:1], out_type=np.uint8, min_max=(-1, 1))
+                        
                         # Change probabilities (class-1 probability)
                         change_probs = torch.softmax(change_pred[0], dim=0)
                         change_prob = change_probs[1].detach().cpu().numpy()
@@ -928,16 +1008,53 @@ if __name__ == '__main__':
                         seg_t2_probs = torch.softmax(seg_logits_t2[0], dim=0)
                         seg_t1_max_prob = torch.max(seg_t1_probs, dim=0).values.detach().cpu().numpy()  # [H,W]
                         seg_t2_max_prob = torch.max(seg_t2_probs, dim=0).values.detach().cpu().numpy()
+                        
+                        # Create binary ground truth change (black=0, white=255)
                         test_gt_change_bw = ((test_change_bin[0] > 0).float().cpu().numpy() * 255).astype(np.uint8)
+                        
+                        # Create binary change prediction (black=0, white=255)
+                        test_pred_change_binary = ((G_pred[0] > 0).detach().cpu().numpy() * 255).astype(np.uint8)
+                        
+                        # Handle ground truth segmentation masks
+                        test_seg_t1_np = seg_t1[0].detach().cpu().numpy()
+                        test_seg_t2_np = seg_t2[0].detach().cpu().numpy()
+                        
+                        if test_seg_t1_np.ndim == 3 and test_seg_t1_np.shape[2] == 3:
+                            max_val = test_seg_t1_np.max()
+                            if max_val > 0:
+                                test_gt_seg_t1_img = ((test_seg_t1_np / max_val) * 255).astype(np.uint8)
+                            else:
+                                test_gt_seg_t1_img = test_seg_t1_np.astype(np.uint8)
+                        else:
+                            test_gt_seg_t1_img = create_color_mask(seg_t1[0], num_classes=opt['model']['n_classes'])
+                        
+                        if test_seg_t2_np.ndim == 3 and test_seg_t2_np.shape[2] == 3:
+                            max_val = test_seg_t2_np.max()
+                            if max_val > 0:
+                                test_gt_seg_t2_img = ((test_seg_t2_np / max_val) * 255).astype(np.uint8)
+                            else:
+                                test_gt_seg_t2_img = test_seg_t2_np.astype(np.uint8)
+                        else:
+                            test_gt_seg_t2_img = create_color_mask(seg_t2[0], num_classes=opt['model']['n_classes'])
+                        
                         wandb.log({
-                            # Multi-class segmentations (colorized)
+                            # Input images
+                            "test/input_t1": [wandb.Image(test_img_t1, caption="Test Input Image T1")],
+                            "test/input_t2": [wandb.Image(test_img_t2, caption="Test Input Image T2")],
+                            
+                            # Predictions with consistent color mapping
                             "test/pred_seg_t1": [wandb.Image(create_color_mask(pred_seg_t1[0], num_classes=opt['model']['n_classes']), caption="Test Pred Seg T1 (multi-class)")],
                             "test/pred_seg_t2": [wandb.Image(create_color_mask(pred_seg_t2[0], num_classes=opt['model']['n_classes']), caption="Test Pred Seg T2 (multi-class)")],
-                            # Confidence maps
+                            "test/pred_change": [wandb.Image(test_pred_change_binary, caption="Test Pred Change (binary BW)")],
+                            
+                            # Probability maps
                             "test/pred_seg_t1_prob": [wandb.Image(seg_t1_max_prob, caption="Test Pred Seg T1 Max Probability")],
                             "test/pred_seg_t2_prob": [wandb.Image(seg_t2_max_prob, caption="Test Pred Seg T2 Max Probability")],
-                            "test/pred_change": [wandb.Image(create_color_mask(G_pred[0], num_classes=2), caption="Test Pred Change (binary)")],
                             "test/pred_change_prob": [wandb.Image(change_prob, caption="Test Pred Change Class-1 Probability")],
+                            
+                            # Ground truths with consistent color mapping
+                            "test/gt_seg_t1": [wandb.Image(test_gt_seg_t1_img, caption="Test GT Seg T1")],
+                            "test/gt_seg_t2": [wandb.Image(test_gt_seg_t2_img, caption="Test GT Seg T2")],
                             "test/gt_change": [wandb.Image(test_gt_change_bw, caption="Test GT Change (binary BW)")]
                         })
                     binary_pred = G_pred.int()
