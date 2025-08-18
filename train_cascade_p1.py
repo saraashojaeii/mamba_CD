@@ -35,18 +35,18 @@ def set_all_seeds(seed):
     torch.backends.cudnn.benchmark = False
 
 # Parse experiment-level arguments early
-parser = argparse.ArgumentParser(description='Cascade CD Training')
+parser = argparse.ArgumentParser(description='Cascade CD Training (early args parsing)')
 parser.add_argument('--model', type=str, default='mamba', help='Model name for run naming')
 parser.add_argument('--dataset', type=str, default='second', help='Dataset name for run naming')
 parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
 parser.add_argument('--tag', type=str, default='', help='Optional custom tag for run naming')
-args, unknown = parser.parse_known_args()
+early_args, unknown = parser.parse_known_args()
 
 # Compose run name
 now = datetime.now().strftime('%Y%m%d-%H')
-run_name = f"{args.model}_{args.dataset}_{now}_{args.seed}"
-if args.tag:
-    run_name += f"_{args.tag}"
+run_name = f"{early_args.model}_{early_args.dataset}_{now}_{early_args.seed}"
+if early_args.tag:
+    run_name += f"_{early_args.tag}"
 
 # Results folder convention - will be set after loading config
 RESULTS_ROOT = None
@@ -55,7 +55,7 @@ LOG_DIR = None
 CHECKPOINT_DIR = None
 
 # Set all random seeds
-set_all_seeds(args.seed)
+set_all_seeds(early_args.seed)
 
 # Initial run info
 print(f"[INFO] Run name: {run_name}")
@@ -181,6 +181,8 @@ if __name__ == '__main__':
                         choices=['train', 'test'], help='Run either train(training + validation) or testing',)
     parser.add_argument('--gpu_ids', type=str, default=None)
     parser.add_argument('-log_eval', action='store_true')
+    # Accept seed here as well (even though seeding uses early_args)
+    parser.add_argument('--seed', type=int, default=None, help='Optional; accepted for compatibility')
 
     # Parse config
     args = parser.parse_args()
@@ -230,7 +232,7 @@ if __name__ == '__main__':
     
     # Log experiment configuration and seed information
     logger.info(f"Run name: {run_name}")
-    logger.info(f"Seed: {args.seed}")
+    logger.info(f"Seed: {early_args.seed}")
     logger.info(f"Results directory: {RESULTS_DIR}")
     logger.info(f"Log directory: {LOG_DIR}")
     logger.info(f"Checkpoint directory: {CHECKPOINT_DIR}")
