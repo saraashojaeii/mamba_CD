@@ -4,7 +4,7 @@
   "gpu_ids":[0],
 
   "wandb": {
-    "project": "BuildingCD_mamba_based"
+    "project": "BuildingCD_mamba_cascade"
   },
 
   "path_cd": {
@@ -48,13 +48,8 @@
   "model" : {
     "name" : "cdmamba_modified",
     "loss" : "ce_dice",
-    "loss_weights": {
-      "seg_t1": 1.0,
-      "seg_t2": 1.0,
-      "change": 1.0
-    },
     "init_filters" : 16,
-    "n_classes" : 6,
+    "n_classes" : 2,
     "mode" : "AGLGF",
     "conv_mode" : "orignal_dinner",
     "local_query_model" : "orignal_dinner",
