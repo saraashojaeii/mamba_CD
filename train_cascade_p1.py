@@ -59,7 +59,7 @@ set_all_seeds(early_args.seed)
 
 # Initial run info
 print(f"[INFO] Run name: {run_name}")
-print(f"[INFO] Seed: {args.seed}")
+print(f"[INFO] Seed: {early_args.seed}")
 
 def normalize_change_target(seg1: torch.Tensor | None,
                             seg2: torch.Tensor | None,
