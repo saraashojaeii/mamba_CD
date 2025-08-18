@@ -408,8 +408,21 @@ if __name__ == '__main__':
                 seg_t2 = (train_data['L2'] if 'L2' in train_data else train_data['L']).to(device)
                 change = (train_data['change'] if 'change' in train_data else train_data['L']).to(device)
 
-                # Forward pass (model returns only binary change logits [B,2,H,W])
-                change_pred = cd_model(train_im1, train_im2)
+                # Forward pass (model should return binary change logits [B,2,H,W])
+                outputs = cd_model(train_im1, train_im2)
+                # Some implementations may still return a tuple; extract the change logits
+                if isinstance(outputs, tuple):
+                    # Prefer the first tensor-like output
+                    change_pred = None
+                    for o in outputs:
+                        if torch.is_tensor(o):
+                            change_pred = o
+                            break
+                    if change_pred is None:
+                        # Fallback: take the first element
+                        change_pred = outputs[0]
+                else:
+                    change_pred = outputs
                 
                 # Debug: Check for NaN in model outputs
                 # for i, output in enumerate(outputs):
@@ -613,7 +626,17 @@ if __name__ == '__main__':
                     
                     # Forward pass
                     # Forward pass, model returns only change logits
-                    val_change_pred = cd_model(val_img1, val_img2)
+                    outputs = cd_model(val_img1, val_img2)
+                    if isinstance(outputs, tuple):
+                        val_change_pred = None
+                        for o in outputs:
+                            if torch.is_tensor(o):
+                                val_change_pred = o
+                                break
+                        if val_change_pred is None:
+                            val_change_pred = outputs[0]
+                    else:
+                        val_change_pred = outputs
                     # Create binary ground truth for validation (robust [B,H,W])
                     val_change_bin = normalize_change_target(val_seg_t1, val_seg_t2, val_change)
                     # Use 2-class criterion
