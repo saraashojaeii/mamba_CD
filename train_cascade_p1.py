@@ -199,6 +199,8 @@ if __name__ == '__main__':
     parser.add_argument('--max_test_batches', type=int, default=0, help='Limit number of test batches (0 = no limit)')
     # Threshold for converting probs to binary mask (class-1)
     parser.add_argument('--change_threshold', type=float, default=0.5, help='Probability threshold for change class (class-1) binarization')
+    # Auxiliary self-supervised loss weight
+    parser.add_argument('--aux_recon_weight', type=float, default=0.1, help='Weight for auxiliary reconstruction loss')
 
     # Parse config
     args = parser.parse_args()
@@ -445,23 +447,33 @@ if __name__ == '__main__':
                 # Segmentation labels are not used in this pipeline
                 change = (train_data['change'] if 'change' in train_data else train_data['L']).to(device)
 
-                # Forward pass (model should return binary change logits [B,2,H,W])
+                # Forward pass with auxiliary reconstruction (enhanced model)
+                aux_weight = getattr(args, 'aux_recon_weight', 0.1)
                 if amp_enabled:
                     with torch.cuda.amp.autocast(enabled=True, dtype=amp_dtype):
-                        outputs = cd_model(train_im1, train_im2)
+                        outputs = cd_model(train_im1, train_im2, return_aux=(aux_weight > 0))
                 else:
-                    outputs = cd_model(train_im1, train_im2)
-                # Some implementations may still return a tuple; extract the change logits
-                if isinstance(outputs, tuple):
-                    change_pred = None
-                    for o in outputs:
-                        if torch.is_tensor(o):
-                            change_pred = o
-                            break
-                    if change_pred is None:
-                        change_pred = outputs[0]
+                    outputs = cd_model(train_im1, train_im2, return_aux=(aux_weight > 0))
+                
+                # Handle outputs: change_logits + optional reconstructions
+                if isinstance(outputs, tuple) and len(outputs) == 3:
+                    change_pred, recon_t1, recon_t2 = outputs
+                    has_aux = True
+                elif isinstance(outputs, tuple):
+                    candidates = [o for o in outputs if torch.is_tensor(o) and o.dim() == 4]
+                    two_ch = [o for o in candidates if o.size(1) == 2]
+                    if two_ch:
+                        change_pred = two_ch[0]         # best: the 2-channel one
+                    else:
+                        change_pred = candidates[-1]
+                    has_aux = False
                 else:
                     change_pred = outputs
+                    has_aux = False
+                
+                # Store original inputs for reconstruction loss before deletion
+                if has_aux and aux_weight > 0:
+                    orig_im1, orig_im2 = train_im1, train_im2
                 
                 del train_im1, train_im2
                 # torch.cuda.empty_cache()
@@ -471,14 +483,41 @@ if __name__ == '__main__':
                 if change_bin.dim() == 4 and change_bin.size(1) == 1:
                     change_bin = change_bin.squeeze(1)
                 change_bin = change_bin.long().clamp(0, 1)
+                
+                # Compute losses
                 if amp_enabled:
                     with torch.cuda.amp.autocast(enabled=True, dtype=amp_dtype):
-                        train_loss = loss_fun_change(change_pred, change_bin)
+                        # Main change detection loss
+                        change_loss = loss_fun_change(change_pred, change_bin)
+                        train_loss = change_loss
+                        
+                        # Auxiliary reconstruction loss
+                        if has_aux and aux_weight > 0:
+                            recon_loss_t1 = F.mse_loss(recon_t1, orig_im1)
+                            recon_loss_t2 = F.mse_loss(recon_t2, orig_im2)
+                            aux_loss = (recon_loss_t1 + recon_loss_t2) / 2
+                            train_loss = change_loss + aux_weight * aux_loss
+                        
                         train_loss = train_loss / accumulation_steps
                 else:
-                    train_loss = loss_fun_change(change_pred, change_bin)
+                    # Main change detection loss
+                    change_loss = loss_fun_change(change_pred, change_bin)
+                    train_loss = change_loss
+                    
+                    # Auxiliary reconstruction loss
+                    if has_aux and aux_weight > 0:
+                        recon_loss_t1 = F.mse_loss(recon_t1, orig_im1)
+                        recon_loss_t2 = F.mse_loss(recon_t2, orig_im2)
+                        aux_loss = (recon_loss_t1 + recon_loss_t2) / 2
+                        train_loss = change_loss + aux_weight * aux_loss
+                    
                     train_loss = train_loss / accumulation_steps
-                loss_dict = {'change': train_loss.item()}
+                
+                # Build loss dict for logging
+                loss_dict = {'change': change_loss.item()}
+                if has_aux and aux_weight > 0:
+                    loss_dict['aux_recon'] = aux_loss.item()
+                    loss_dict['total'] = train_loss.item() * accumulation_steps
                 
                 # Convert logits to predicted masks for logging
                 with torch.no_grad():
@@ -565,6 +604,10 @@ if __name__ == '__main__':
                 
                 log_dict['loss'] = train_loss.item()
                 log_dict['loss_change'] = loss_dict['change']
+                if 'aux_recon' in loss_dict:
+                    log_dict['loss_aux_recon'] = loss_dict['aux_recon']
+                if 'total' in loss_dict:
+                    log_dict['loss_total'] = loss_dict['total']
                 epoch_loss += train_loss.item()
 
                 # For metric, use argmax over 2-class change head
@@ -647,13 +690,13 @@ if __name__ == '__main__':
                     # Forward pass, model returns only change logits
                     outputs = cd_model(val_img1, val_img2)
                     if isinstance(outputs, tuple):
-                        val_change_pred = None
-                        for o in outputs:
-                            if torch.is_tensor(o):
-                                val_change_pred = o
-                                break
-                        if val_change_pred is None:
-                            val_change_pred = outputs[0]
+                        candidates = [o for o in outputs if torch.is_tensor(o) and o.dim() == 4]
+                        two_ch = [o for o in candidates if o.size(1) == 2]
+                        if two_ch:
+                            val_change_pred = two_ch[0]         # best: the 2-channel one
+                        else:
+                            val_change_pred = candidates[-1]
+                        
                     else:
                         val_change_pred = outputs
                     # Create binary ground truth for validation (robust [B,H,W])

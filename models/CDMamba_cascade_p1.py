@@ -280,11 +280,47 @@ class CDMamba(nn.Module):
         self.convInit = get_conv_layer(spatial_dims, in_channels, init_filters)
         self.srcm_encoder_layers = self._make_srcm_encoder_layers()
         self.srcm_decoder_layers, self.up_samples = self._make_srcm_decoder_layers(up_mode=self.up_mode)
-        # Binary change head operating on fused decoder features
-        self.change_head = nn.Sequential(
+        
+        # Enhanced change decoder with deeper/wider architecture
+        self.change_decoder = nn.Sequential(
+            # First refinement stage
+            SRCMBlock(self.spatial_dims, self.init_filters, norm=self.norm, act=self.act, conv_mode=self.up_conv_mode),
+            SRCMBlock(self.spatial_dims, self.init_filters, norm=self.norm, act=self.act, conv_mode=self.up_conv_mode),
+            # Feature expansion for richer representations
+            get_conv_layer(self.spatial_dims, self.init_filters, self.init_filters * 2, kernel_size=3, padding=1),
+            get_norm_layer(name=self.norm, spatial_dims=self.spatial_dims, channels=self.init_filters * 2),
+            self.act_mod,
+            # Second refinement stage with wider features
+            SRCMBlock(self.spatial_dims, self.init_filters * 2, norm=self.norm, act=self.act, conv_mode=self.up_conv_mode),
+            # Compress back to change prediction
+            get_conv_layer(self.spatial_dims, self.init_filters * 2, self.init_filters, kernel_size=3, padding=1),
             get_norm_layer(name=self.norm, spatial_dims=self.spatial_dims, channels=self.init_filters),
             self.act_mod,
-            get_conv_layer(self.spatial_dims, self.init_filters, 2, kernel_size=1, bias=True),
+        )
+        
+        # Enhanced change head with residual connection
+        self.change_head = nn.Sequential(
+            get_conv_layer(self.spatial_dims, self.init_filters, self.init_filters // 2, kernel_size=3, padding=1),
+            get_norm_layer(name=self.norm, spatial_dims=self.spatial_dims, channels=self.init_filters // 2),
+            self.act_mod,
+            get_conv_layer(self.spatial_dims, self.init_filters // 2, 2, kernel_size=1, bias=True),
+        )
+        
+        # Self-supervised auxiliary heads for better feature learning
+        self.aux_recon_head_t1 = nn.Sequential(
+            get_conv_layer(self.spatial_dims, self.init_filters, self.init_filters // 2, kernel_size=3, padding=1),
+            get_norm_layer(name=self.norm, spatial_dims=self.spatial_dims, channels=self.init_filters // 2),
+            self.act_mod,
+            get_conv_layer(self.spatial_dims, self.init_filters // 2, in_channels, kernel_size=1, bias=True),
+            nn.Tanh()  # Reconstruct normalized images in [-1, 1]
+        )
+        
+        self.aux_recon_head_t2 = nn.Sequential(
+            get_conv_layer(self.spatial_dims, self.init_filters, self.init_filters // 2, kernel_size=3, padding=1),
+            get_norm_layer(name=self.norm, spatial_dims=self.spatial_dims, channels=self.init_filters // 2),
+            self.act_mod,
+            get_conv_layer(self.spatial_dims, self.init_filters // 2, in_channels, kernel_size=1, bias=True),
+            nn.Tanh()  # Reconstruct normalized images in [-1, 1]
         )
 
         self.fusion_blocks = nn.ModuleList([
@@ -395,12 +431,18 @@ class CDMamba(nn.Module):
         return self._decode_with_layers(x, down_x, self.up_samples, self.srcm_decoder_layers)
 
 
-    def forward(self, x1: torch.Tensor, x2: torch.Tensor):
+    def forward(self, x1: torch.Tensor, x2: torch.Tensor, return_aux: bool = False):
         """
         Returns:
             change_logits: [B, 2, H, W] -- binary change logits ([no-change, change])
+            If return_aux=True, also returns:
+                recon_t1: [B, C, H, W] -- reconstructed T1 image
+                recon_t2: [B, C, H, W] -- reconstructed T2 image
         """
         b, c, h, w = x1.shape
+        # Store original inputs for reconstruction loss
+        orig_x1, orig_x2 = x1, x2
+        
         # Encode both images
         x1_latent, down_x1 = self.encode(x1)
         x2_latent, down_x2 = self.encode(x2)
@@ -417,11 +459,24 @@ class CDMamba(nn.Module):
             fused_i = self.fuse_reduce[i](cat_i)
             down_x.append(fused_i)
         down_x.reverse()
-        # Decode change features
+        
+        # Decode change features with deep refinement
         x0 = self.deep_refine(down_x[0])
         fused = self.decode(x0, down_x)
-        change_logits = self.change_head(fused)
-        return change_logits
+        
+        # Enhanced change decoder
+        change_features = self.change_decoder(fused)
+        # Residual connection for better gradient flow
+        change_features = change_features + fused
+        change_logits = self.change_head(change_features)
+        
+        if return_aux:
+            # Self-supervised reconstruction
+            recon_t1 = self.aux_recon_head_t1(change_features)
+            recon_t2 = self.aux_recon_head_t2(change_features)
+            return change_logits, recon_t1, recon_t2
+        else:
+            return change_logits
 
 if __name__ == "__main__":
     device = "cuda:0"
