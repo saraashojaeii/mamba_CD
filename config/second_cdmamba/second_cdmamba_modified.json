@@ -4,13 +4,13 @@
   "gpu_ids":[0],
 
   "wandb": {
-    "project": "BuildingCD_mamba_based"
+    "project": "BuildingCD_mamba_cascade"
   },
 
   "path_cd": {
-    "log": "/root/home/pvc/Building_changedetection_job/experiments/logs",
-    "result": "/root/home/pvc/Building_changedetection_job/experiments/results",
-    "checkpoint": "/root/home/pvc/Building_changedetection_job/experiments/checkpoint",
+    "log": "/root/home/pvc/cd_cascade/experiments/logs",
+    "result": "/root/home/pvc/cd_cascade/experiments/results",
+    "checkpoint": "/root/home/pvc/cd_cascade/experiments/checkpoint",
     "resume_state": null
   },
 
@@ -20,7 +20,7 @@
       "datasetroot": "/root/home/pvc/SECOND/train",
       "resolution": 512,
       "num_workers": 4,
-      "batch_size": 2,
+      "batch_size": 1,
       "use_shuffle": true,
       "data_len": -1
     },
@@ -29,7 +29,7 @@
       "datasetroot": "/root/home/pvc/SECOND/val",
       "resolution": 512,
       "num_workers": 4,
-      "batch_size": 2,
+      "batch_size": 1,
       "use_shuffle": true,
       "data_len": -1
     },
@@ -39,7 +39,7 @@
       "datasetroot": "/root/home/pvc/SECOND/test",
       "resolution": 512,
       "num_workers": 4,
-      "batch_size": 2,
+      "batch_size": 1,
       "use_shuffle": false,
       "data_len": -1
     }
@@ -47,14 +47,9 @@
 
   "model" : {
     "name" : "cdmamba_modified",
-    "loss" : "ce_dice",
-    "loss_weights": {
-      "seg_t1": 1.0,
-      "seg_t2": 1.0,
-      "change": 1.0
-    },
+    "loss" : "ce",
     "init_filters" : 16,
-    "n_classes" : 6,
+    "n_classes" : 2,
     "mode" : "AGLGF",
     "conv_mode" : "orignal_dinner",
     "local_query_model" : "orignal_dinner",
@@ -78,7 +73,7 @@
     "val_print_iter" : 50,
     "optimizer" :{
       "type" : "adam",
-      "lr" : 1e-4
+      "lr" : 1e-3
     },
     "sheduler" : {
       "lr_policy" : "linear",
