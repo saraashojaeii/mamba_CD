@@ -552,7 +552,7 @@ if __name__ == '__main__':
                     change_probs = torch.softmax(change_pred[0], dim=0)
                     
                     # Create probability visualizations
-                    change_prob = change_probs[1].detach().cpu().numpy()
+                    change_prob = change_probs[1].detach().cpu().float().numpy()
                     
                     wandb.log({
                         # Input images
