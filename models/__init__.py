@@ -23,7 +23,7 @@ def create_CD_model(opt):
     from models.mamba_cd import STMambaBCD as changemamba
     from models.rs_mamba import RSM_CD as rs_cdmamba
     # Our CDMamba models
-    from models.CDMamba import CDMamba as cdmamba
+    from models.CDMamba_cascade_p1 import CDMamba as cdmamba
     from models.CDMamba_modified import CDMamba as cdmamba_modified
 
     cd_model = None
