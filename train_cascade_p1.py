@@ -746,7 +746,7 @@ if __name__ == '__main__':
                         })
                     
                     # Clean up validation tensors
-                    del val_change_pred, val_G_pred, val_binary_pred
+                    del val_change_pred, val_binary_pred
             
             # Log validation epoch summary
             val_scores = val_metric.get_scores()
