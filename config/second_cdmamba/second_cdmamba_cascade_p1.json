@@ -20,8 +20,8 @@
       "datasetroot": "/root/home/pvc/SECOND/train",
       "resolution": 512,
       "num_workers": 4,
-      "batch_size": 1,
-      "use_shuffle": false,
+      "batch_size": 2,
+      "use_shuffle": true,
       "data_len": -1
     },
     "val": {
@@ -29,8 +29,8 @@
       "datasetroot": "/root/home/pvc/SECOND/val",
       "resolution": 512,
       "num_workers": 4,
-      "batch_size": 1,
-      "use_shuffle": false,
+      "batch_size": 2,
+      "use_shuffle": true,
       "data_len": -1
     },
 
@@ -39,7 +39,7 @@
       "datasetroot": "/root/home/pvc/SECOND/test",
       "resolution": 512,
       "num_workers": 4,
-      "batch_size": 1,
+      "batch_size": 2,
       "use_shuffle": false,
       "data_len": -1
     }
