@@ -1,0 +1,84 @@
+{
+  "name": "HIUCD-train-CDMamba",
+  "phase": "train",
+  "gpu_ids":[0],
+
+  "wandb": {
+    "project": "BuildingCD_mamba_cascade"
+  },
+
+  "path_cd": {
+    "log": "/root/home/pvc/cd_cascade/experiments/logs",
+    "result": "/root/home/pvc/cd_cascade/experiments/results",
+    "checkpoint": "/root/home/pvc/cd_cascade/experiments/checkpoint",
+    "resume_state": null
+  },
+
+  "datasets": {
+    "train": {
+      "name": "HIUCD-CD-256",
+      "datasetroot": "/root/home/pvc/HICD/train",
+      "resolution": 1024,
+      "num_workers": 4,
+      "batch_size": 2,
+      "use_shuffle": true,
+      "data_len": -1
+    },
+    "val": {
+      "name": "HIUCD-CD-256",
+      "datasetroot": "/root/home/pvc/HICD/val",
+      "resolution": 1024,
+      "num_workers": 4,
+      "batch_size": 2,
+      "use_shuffle": true,
+      "data_len": -1
+    },
+
+    "test": {
+      "name": "HIUCD-CD-256",
+      "datasetroot": "/root/home/pvc/HICD/test",
+      "resolution": 1024,
+      "num_workers": 4,
+      "batch_size": 2,
+      "use_shuffle": false,
+      "data_len": -1
+    }
+  },
+
+  "model" : {
+    "name" : "cdmamba_modified",
+    "loss" : "ce",
+    "init_filters" : 16,
+    "n_classes" : 2,
+    "mode" : "AGLGF",
+    "conv_mode" : "orignal_dinner",
+    "local_query_model" : "orignal_dinner",
+    "up_mode" : "SRCM",
+    "up_conv_mode" : "deepwise",
+    "spatial_dims" : 2,
+    "in_channels" : 3,
+    "resdiual" : false,
+    "blocks_down" : [1, 2, 2, 4],
+    "blocks_up" : [1, 1, 1],
+    "diff_abs" : "later",
+    "stage" : 2,
+    "mamba_act" : "relu",
+    "norm" : ["GROUP", {"num_groups": 8}]
+  },
+
+  "train" : {
+    "n_epoch" : 200,
+    "train_print_iter" : 500,
+    "val_freq" : 1,
+    "val_print_iter" : 50,
+    "optimizer" :{
+      "type" : "adam",
+      "lr" : 1e-3
+    },
+    "sheduler" : {
+      "lr_policy" : "linear",
+      "n_step" : 3,
+      "gamma" : 0.1
+    }
+  }
+}
