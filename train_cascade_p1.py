@@ -597,7 +597,7 @@ if __name__ == '__main__':
                     logger.info(message)
                 
                 # Final cleanup of saved tensors
-                del change_pred, change_gt, G_pred, binary_pred
+                del change_pred, change_gt, binary_pred
                 # torch.cuda.empty_cache()
 
             ### Epoch Summary ###
