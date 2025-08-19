@@ -292,25 +292,18 @@ class CDMamba(nn.Module):
             for i in range(self.stage)
         ])
 
-        # self.l_gf1 = L_GF(self.channels_list[0], conv_mode=self.local_query_model, resdiual=self.resdiual, act=self.mamba_act)
-        # self.l_gf2 = L_GF(self.channels_list[1], conv_mode=self.local_query_model, resdiual=self.resdiual, act=self.mamba_act)
-        # self.l_gf3 = L_GF(self.channels_list[2], conv_mode=self.local_query_model, resdiual=self.resdiual, act=self.mamba_act)
-        # self.l_gf4 = L_GF(self.channels_list[3], conv_mode=self.local_query_model, resdiual=self.resdiual, act=self.mamba_act)
-        # self.l_gf = nn.Sequential(self.l_gf1, self.l_gf2, self.l_gf3, self.l_gf4)
+        # Per-scale reducers to project concatenated [x1, x2, |x1-x2|] back to C channels
+        self.fuse_reduce = nn.ModuleList([
+            get_conv_layer(self.spatial_dims, self.channels_list[i] * 3, self.channels_list[i], kernel_size=1)
+            for i in range(len(self.channels_list))
+        ])
 
-
-        # self.g_gf1 = G_GF(self.channels_list[0], resdiual=self.resdiual, act=self.mamba_act)
-        # self.g_gf2 = G_GF(self.channels_list[1], resdiual=self.resdiual, act=self.mamba_act)
-        # self.g_gf3 = G_GF(self.channels_list[2], resdiual=self.resdiual, act=self.mamba_act)
-        # self.g_gf4 = G_GF(self.channels_list[3], resdiual=self.resdiual, act=self.mamba_act)
-        # self.g_gf = nn.Sequential(self.g_gf1, self.g_gf2, self.g_gf3, self.g_gf4)
-
-        # self.ag1 = AdaptiveGate(self.channels_list[0])
-        # self.ag2 = AdaptiveGate(self.channels_list[1])
-        # self.ag3 = AdaptiveGate(self.channels_list[2])
-        # self.ag4 = AdaptiveGate(self.channels_list[3])
-        # self.ag = nn.Sequential(self.ag1, self.ag2, self.ag3, self.ag4)
-
+        # Deep refinement on the deepest fused feature before decoding
+        deepest_c = self.channels_list[-1]
+        self.deep_refine = nn.Sequential(
+            SRCMBlock(self.spatial_dims, deepest_c, norm=self.norm, act=self.act, conv_mode=self.up_conv_mode),
+            SRCMBlock(self.spatial_dims, deepest_c, norm=self.norm, act=self.act, conv_mode=self.up_conv_mode),
+        )
 
 
         if dropout_prob is not None:
@@ -416,11 +409,17 @@ class CDMamba(nn.Module):
             x1_i, x2_i = down_x1[i], down_x2[i]
             if self.diff_abs == "later" and self.mode == "AGLGF":
                 if i < self.stage:
-                    x1_i, _ = self.fusion_blocks[i](x1_i, x2_i)  # only x1 gets updated
-            down_x.append(torch.abs(x1_i - x2_i))
+                    x1_i, _ = self.fusion_blocks[i](x1_i, x2_i)
+                    x2_i, _ = self.fusion_blocks[i](x2_i, x1_i)
+            # Concatenate features and their absolute difference, then reduce
+            diff_i = torch.abs(x1_i - x2_i)
+            cat_i = torch.cat([x1_i, x2_i, diff_i], dim=1)
+            fused_i = self.fuse_reduce[i](cat_i)
+            down_x.append(fused_i)
         down_x.reverse()
         # Decode change features
-        fused = self.decode(down_x[0], down_x)
+        x0 = self.deep_refine(down_x[0])
+        fused = self.decode(x0, down_x)
         change_logits = self.change_head(fused)
         return change_logits
 

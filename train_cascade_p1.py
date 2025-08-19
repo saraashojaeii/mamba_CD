@@ -438,6 +438,8 @@ if __name__ == '__main__':
                 # Binary change detection branch (2-channel change head)
                 # Create binary ground truth robustly: [B,H,W] long
                 change_bin = normalize_change_target(seg_t1, seg_t2, change)
+                # Ensure targets are long dtype with values {0,1}
+                change_bin = change_bin.long().clamp(0, 1)
                 # Compute loss against binary targets (use 2-class criterion)
                 train_loss = loss_fun_change(change_pred, change_bin)
                 # Scale loss for gradient accumulation
@@ -640,6 +642,8 @@ if __name__ == '__main__':
                         val_change_pred = outputs
                     # Create binary ground truth for validation (robust [B,H,W])
                     val_change_bin = normalize_change_target(val_seg_t1, val_seg_t2, val_change)
+                    # Ensure targets are long dtype with values {0,1}
+                    val_change_bin = val_change_bin.long().clamp(0, 1)
                     # Use 2-class criterion
                     val_loss = loss_fun_change(val_change_pred, val_change_bin)
                     val_loss_total += val_loss.item()
@@ -791,6 +795,8 @@ if __name__ == '__main__':
                     G_pred = torch.argmax(change_pred.detach(), dim=1)
                     # Normalize GT to binary [B,H,W]
                     test_change_bin = normalize_change_target(seg_t1, seg_t2, change)
+                    # Ensure targets are long dtype with values {0,1}
+                    test_change_bin = test_change_bin.long().clamp(0, 1)
 
                     # Prepare numpy arrays for metrics
                     pred_np = G_pred.int().cpu().numpy()
