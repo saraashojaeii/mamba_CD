@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from datetime import datetime
 from tqdm import tqdm
+from itertools import islice
 
 # =============================
 # Run-naming, seed, and results
@@ -184,6 +185,10 @@ if __name__ == '__main__':
     parser.add_argument('-log_eval', action='store_true')
     # Accept seed here as well (even though seeding uses early_args)
     parser.add_argument('--seed', type=int, default=None, help='Optional; accepted for compatibility')
+    # Limits for overfitting/quick runs
+    parser.add_argument('--max_train_batches', type=int, default=0, help='Limit number of training batches per epoch (0 = no limit)')
+    parser.add_argument('--max_val_batches', type=int, default=0, help='Limit number of validation batches per epoch (0 = no limit)')
+    parser.add_argument('--max_test_batches', type=int, default=0, help='Limit number of test batches (0 = no limit)')
 
     # Parse config
     args = parser.parse_args()
@@ -396,7 +401,11 @@ if __name__ == '__main__':
             # Set memory fraction to avoid fragmentation (more conservative)
             torch.cuda.set_per_process_memory_fraction(0.8)
             
-            for current_step, train_data in enumerate(tqdm(train_loader, total=len(train_loader), desc=f"Train {current_epoch}/{opt['train']['n_epoch']}")):
+            # Apply optional cap on training batches
+            _max_train = getattr(args, 'max_train_batches', 0) or 0
+            _train_total = min(len(train_loader), _max_train) if _max_train > 0 else len(train_loader)
+            _train_iter = islice(train_loader, _max_train) if _max_train > 0 else train_loader
+            for current_step, train_data in enumerate(tqdm(_train_iter, total=_train_total, desc=f"Train {current_epoch}/{opt['train']['n_epoch']}")):
                 # Aggressive memory cleanup at start of each step
                 # torch.cuda.empty_cache()
                 # torch.cuda.synchronize()
@@ -614,7 +623,11 @@ if __name__ == '__main__':
             shape_mismatch_logged = False  # Flag to log shape mismatch only once per epoch
             
             with torch.no_grad():
-                for val_step, val_data in enumerate(tqdm(val_loader, total=len(val_loader), desc=f"Val {current_epoch}")):
+                # Apply optional cap on validation batches
+                _max_val = getattr(args, 'max_val_batches', 0) or 0
+                _val_total = min(len(val_loader), _max_val) if _max_val > 0 else len(val_loader)
+                _val_iter = islice(val_loader, _max_val) if _max_val > 0 else val_loader
+                for val_step, val_data in enumerate(tqdm(_val_iter, total=_val_total, desc=f"Val {current_epoch}")):
                     val_img1 = val_data['A'].to(device)
                     val_img2 = val_data['B'].to(device)
                     
@@ -764,7 +777,11 @@ if __name__ == '__main__':
             os.makedirs(test_result_path, exist_ok=True)
             
             with torch.no_grad():
-                for current_step, test_data in enumerate(tqdm(test_loader, total=len(test_loader), desc="Test")):
+                # Apply optional cap on test batches
+                _max_test = getattr(args, 'max_test_batches', 0) or 0
+                _test_total = min(len(test_loader), _max_test) if _max_test > 0 else len(test_loader)
+                _test_iter = islice(test_loader, _max_test) if _max_test > 0 else test_loader
+                for current_step, test_data in enumerate(tqdm(_test_iter, total=_test_total, desc="Test")):
                     test_img1 = test_data['A'].to(device)
                     test_img2 = test_data['B'].to(device)
                     # Robust label extraction - data automatically on correct device
@@ -919,4 +936,3 @@ if __name__ == '__main__':
                 logger.info(message)
                 logger.info('End of testing...')
 
-            # Note: Validation logging is now handled in the validation loop above
