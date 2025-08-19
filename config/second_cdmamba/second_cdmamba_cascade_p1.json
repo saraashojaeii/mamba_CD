@@ -21,7 +21,7 @@
       "resolution": 512,
       "num_workers": 4,
       "batch_size": 1,
-      "use_shuffle": true,
+      "use_shuffle": false,
       "data_len": -1
     },
     "val": {
@@ -30,7 +30,7 @@
       "resolution": 512,
       "num_workers": 4,
       "batch_size": 1,
-      "use_shuffle": true,
+      "use_shuffle": false,
       "data_len": -1
     },
 
