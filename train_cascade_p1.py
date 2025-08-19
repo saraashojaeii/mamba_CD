@@ -458,7 +458,13 @@ if __name__ == '__main__':
                 # Handle outputs: change_logits + optional reconstructions
                 if isinstance(outputs, tuple) and len(outputs) == 3:
                     change_pred, recon_t1, recon_t2 = outputs
-                    has_aux = True
+                    # Verify reconstruction outputs have correct dimensions
+                    if recon_t1.size(1) != train_data['A'].size(1) or recon_t2.size(1) != train_data['A'].size(1):
+                        print(f"Warning: Reconstruction outputs have wrong channels. Expected {train_data['A'].size(1)}, got recon_t1: {recon_t1.size(1)}, recon_t2: {recon_t2.size(1)}")
+                        print(f"Change pred shape: {change_pred.shape}, recon_t1 shape: {recon_t1.shape}, recon_t2 shape: {recon_t2.shape}")
+                        has_aux = False  # Disable aux loss due to dimension mismatch
+                    else:
+                        has_aux = True
                 elif isinstance(outputs, tuple):
                     candidates = [o for o in outputs if torch.is_tensor(o) and o.dim() == 4]
                     two_ch = [o for o in candidates if o.size(1) == 2]
