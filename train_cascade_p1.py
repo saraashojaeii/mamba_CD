@@ -416,46 +416,33 @@ if __name__ == '__main__':
                 train_im1 = train_data['A'].to(device)
                 train_im2 = train_data['B'].to(device)
                 # Robust label extraction and move to device
-                seg_t1 = (train_data['L1'] if 'L1' in train_data else train_data['L']).to(device)
-                seg_t2 = (train_data['L2'] if 'L2' in train_data else train_data['L']).to(device)
+                # Segmentation labels are not used in this pipeline
                 change = (train_data['change'] if 'change' in train_data else train_data['L']).to(device)
 
                 # Forward pass (model should return binary change logits [B,2,H,W])
                 outputs = cd_model(train_im1, train_im2)
                 # Some implementations may still return a tuple; extract the change logits
                 if isinstance(outputs, tuple):
-                    # Prefer the first tensor-like output
                     change_pred = None
                     for o in outputs:
                         if torch.is_tensor(o):
                             change_pred = o
                             break
                     if change_pred is None:
-                        # Fallback: take the first element
                         change_pred = outputs[0]
                 else:
                     change_pred = outputs
                 
-                # Debug: Check for NaN in model outputs
-                # for i, output in enumerate(outputs):
-                #     if torch.isnan(output).any() or torch.isinf(output).any():
-                #         logger.warning(f"NaN/Inf detected in model output {i}: nan={torch.isnan(output).sum()}, inf={torch.isinf(output).sum()}")
-                #         logger.warning(f"Output {i} stats: min={output.min()}, max={output.max()}, mean={output.mean()}")
-                
-                # Clear input tensors from memory immediately after forward pass
                 del train_im1, train_im2
                 # torch.cuda.empty_cache()
 
-                # Binary change detection branch (2-channel change head)
-                # Create binary ground truth robustly: [B,H,W] long
-                change_bin = normalize_change_target(seg_t1, seg_t2, change)
-                # Ensure targets are long dtype with values {0,1}
+                # Build binary change target directly from 'change' tensor
+                change_bin = change
+                if change_bin.dim() == 4 and change_bin.size(1) == 1:
+                    change_bin = change_bin.squeeze(1)
                 change_bin = change_bin.long().clamp(0, 1)
-                # Compute loss against binary targets (use 2-class criterion)
                 train_loss = loss_fun_change(change_pred, change_bin)
-                # Scale loss for gradient accumulation
                 train_loss = train_loss / accumulation_steps
-                # Create a simple loss_dict for logging
                 loss_dict = {'change': train_loss.item()}
                 
                 # Convert logits to predicted masks for logging
@@ -473,30 +460,7 @@ if __name__ == '__main__':
                     img_t1 = Metrics.tensor2img(train_data['A'][0:1], out_type=np.uint8, min_max=(-1, 1))
                     img_t2 = Metrics.tensor2img(train_data['B'][0:1], out_type=np.uint8, min_max=(-1, 1))
                     
-                    # Handle ground truth masks - check if they're already RGB or need color mapping
-                    seg_t1_np = seg_t1[0].detach().cpu().numpy()
-                    seg_t2_np = seg_t2[0].detach().cpu().numpy()
-                    
-                    # If ground truth is already RGB (3 channels), scale it properly
-                    if seg_t1_np.ndim == 3 and seg_t1_np.shape[2] == 3:
-                        # Scale from 0-max_val to 0-255 for proper display
-                        max_val = seg_t1_np.max()
-                        if max_val > 0:
-                            gt_seg_t1_img = ((seg_t1_np / max_val) * 255).astype(np.uint8)
-                        else:
-                            gt_seg_t1_img = seg_t1_np.astype(np.uint8)
-                    else:
-                        gt_seg_t1_img = create_color_mask(seg_t1[0])
-                    
-                    if seg_t2_np.ndim == 3 and seg_t2_np.shape[2] == 3:
-                        # Scale from 0-max_val to 0-255 for proper display
-                        max_val = seg_t2_np.max()
-                        if max_val > 0:
-                            gt_seg_t2_img = ((seg_t2_np / max_val) * 255).astype(np.uint8)
-                        else:
-                            gt_seg_t2_img = seg_t2_np.astype(np.uint8)
-                    else:
-                        gt_seg_t2_img = create_color_mask(seg_t2[0])
+                    # No segmentation ground-truth visualizations; only change maps are logged
                     
                     # Prepare binary GT change as black/white image
                     train_gt_change_bw = ((change[0] > 0).float().detach().cpu().numpy() * 255).astype(np.uint8)
@@ -531,12 +495,6 @@ if __name__ == '__main__':
                 # Check for NaN loss before backward pass
                 if torch.isnan(train_loss) or torch.isinf(train_loss):
                     logger.warning(f"NaN/Inf loss detected at epoch {current_epoch}, step {current_step}. Skipping this batch.")
-                    # logger.warning(f"Model parameter stats:")
-                    # for name, param in cd_model.named_parameters():
-                    #     if param.grad is not None:
-                    #         logger.warning(f"  {name}: grad_norm={param.grad.norm():.6f}")
-                    #     if torch.isnan(param).any():
-                    #         logger.warning(f"  {name}: contains NaN parameters!")
                     optimer.zero_grad()
                     continue
                 
@@ -554,14 +512,11 @@ if __name__ == '__main__':
                     
                     optimer.step()
                     optimer.zero_grad()
-                    # Clear gradients from memory
-                    # torch.cuda.empty_cache()
                     
                 # Clean up memory after each batch (avoid double deletion)
-                del seg_t1, seg_t2, change
+                del change
                 if 'pred_change' in locals():
                     del pred_change
-                # torch.cuda.empty_cache()
                 
                 log_dict['loss'] = train_loss.item()
                 log_dict['loss_change'] = loss_dict['change']
@@ -598,7 +553,6 @@ if __name__ == '__main__':
                 
                 # Final cleanup of saved tensors
                 del change_pred, change_gt, binary_pred
-                # torch.cuda.empty_cache()
 
             ### Epoch Summary ###
             scores = metric.get_scores()

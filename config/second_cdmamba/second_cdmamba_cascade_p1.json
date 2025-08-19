@@ -47,7 +47,7 @@
 
   "model" : {
     "name" : "cdmamba_modified",
-    "loss" : "ce_dice",
+    "loss" : "ce",
     "init_filters" : 16,
     "n_classes" : 2,
     "mode" : "AGLGF",
@@ -73,7 +73,7 @@
     "val_print_iter" : 50,
     "optimizer" :{
       "type" : "adam",
-      "lr" : 1e-4
+      "lr" : 1e-3
     },
     "sheduler" : {
       "lr_policy" : "linear",
