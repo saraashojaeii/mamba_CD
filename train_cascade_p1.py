@@ -447,13 +447,13 @@ if __name__ == '__main__':
                 # Segmentation labels are not used in this pipeline
                 change = (train_data['change'] if 'change' in train_data else train_data['L']).to(device)
 
-                # Forward pass with auxiliary reconstruction (enhanced model)
+                # Forward pass (without auxiliary reconstruction for now)
                 aux_weight = getattr(args, 'aux_recon_weight', 0.1)
                 if amp_enabled:
                     with torch.cuda.amp.autocast(enabled=True, dtype=amp_dtype):
-                        outputs = cd_model(train_im1, train_im2, return_aux=(aux_weight > 0))
+                        outputs = cd_model(train_im1, train_im2)
                 else:
-                    outputs = cd_model(train_im1, train_im2, return_aux=(aux_weight > 0))
+                    outputs = cd_model(train_im1, train_im2)
                 
                 # Handle outputs: change_logits + optional reconstructions
                 if isinstance(outputs, tuple) and len(outputs) == 3:
