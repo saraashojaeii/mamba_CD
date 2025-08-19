@@ -29,6 +29,7 @@ from itertools import islice
 # =============================
 def set_all_seeds(seed):
     import random
+    import contextlib
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -187,6 +188,9 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, default=early_args.model, help='Model name (for run naming only)')
     parser.add_argument('--dataset', type=str, default=early_args.dataset, help='Dataset name (for run naming only)')
     parser.add_argument('--tag', type=str, default=early_args.tag, help='Optional custom tag (for run naming only)')
+    # AMP controls
+    parser.add_argument('--no_amp', action='store_true', help='Disable mixed precision (AMP)')
+    parser.add_argument('--amp_dtype', type=str, default='auto', choices=['auto', 'bf16', 'fp16'], help='AMP dtype selection')
     # Accept seed here as well (even though seeding uses early_args)
     parser.add_argument('--seed', type=int, default=None, help='Optional; accepted for compatibility')
     # Limits for overfitting/quick runs
@@ -222,6 +226,24 @@ if __name__ == '__main__':
                 globals()['LOG_DIR'] = stamped
             elif k == 'checkpoint':
                 globals()['CHECKPOINT_DIR'] = stamped
+
+    # =============================
+    # AMP setup (default bf16 on A100/Ampere if available)
+    # =============================
+    amp_enabled = torch.cuda.is_available() and (not getattr(args, 'no_amp', False))
+    if getattr(args, 'amp_dtype', 'auto') == 'bf16':
+        amp_dtype = torch.bfloat16
+    elif getattr(args, 'amp_dtype', 'auto') == 'fp16':
+        amp_dtype = torch.float16
+    else:
+        # auto: prefer bf16 on SM>=80 (A100/Ampere+), else fp16
+        try:
+            cc = torch.cuda.get_device_capability(0) if torch.cuda.is_available() else (0, 0)
+            amp_dtype = torch.bfloat16 if cc and cc[0] >= 8 else torch.float16
+        except Exception:
+            amp_dtype = torch.float16
+    use_scaler = amp_enabled and amp_dtype == torch.float16
+    scaler = torch.cuda.amp.GradScaler(enabled=use_scaler)
     
     # Keep the subfolder name for reference
     opt['path_cd']['exp_folder'] = exp_folder
@@ -424,7 +446,11 @@ if __name__ == '__main__':
                 change = (train_data['change'] if 'change' in train_data else train_data['L']).to(device)
 
                 # Forward pass (model should return binary change logits [B,2,H,W])
-                outputs = cd_model(train_im1, train_im2)
+                if amp_enabled:
+                    with torch.cuda.amp.autocast(enabled=True, dtype=amp_dtype):
+                        outputs = cd_model(train_im1, train_im2)
+                else:
+                    outputs = cd_model(train_im1, train_im2)
                 # Some implementations may still return a tuple; extract the change logits
                 if isinstance(outputs, tuple):
                     change_pred = None
@@ -445,8 +471,13 @@ if __name__ == '__main__':
                 if change_bin.dim() == 4 and change_bin.size(1) == 1:
                     change_bin = change_bin.squeeze(1)
                 change_bin = change_bin.long().clamp(0, 1)
-                train_loss = loss_fun_change(change_pred, change_bin)
-                train_loss = train_loss / accumulation_steps
+                if amp_enabled:
+                    with torch.cuda.amp.autocast(enabled=True, dtype=amp_dtype):
+                        train_loss = loss_fun_change(change_pred, change_bin)
+                        train_loss = train_loss / accumulation_steps
+                else:
+                    train_loss = loss_fun_change(change_pred, change_bin)
+                    train_loss = train_loss / accumulation_steps
                 loss_dict = {'change': train_loss.item()}
                 
                 # Convert logits to predicted masks for logging
@@ -502,8 +533,11 @@ if __name__ == '__main__':
                     optimer.zero_grad()
                     continue
                 
-                # Gradient accumulation without mixed precision for debugging
-                train_loss.backward()
+                # Backward with optional AMP scaling
+                if use_scaler:
+                    scaler.scale(train_loss).backward()
+                else:
+                    train_loss.backward()
                 if current_step == 0 and current_epoch == 0:
                     torch.cuda.synchronize(); import time; t0=time.time()
                     # do backward() here
@@ -512,10 +546,17 @@ if __name__ == '__main__':
                 
                 if (current_step + 1) % accumulation_steps == 0 or (current_step + 1) == len(train_loader):
                     # Gradient clipping to prevent explosion
-                    torch.nn.utils.clip_grad_norm_(cd_model.parameters(), max_norm=0.5)  # More aggressive clipping
-                    
-                    optimer.step()
-                    optimer.zero_grad()
+                    if use_scaler:
+                        # Unscale before clipping
+                        scaler.unscale_(optimer)
+                        torch.nn.utils.clip_grad_norm_(cd_model.parameters(), max_norm=0.5)
+                        scaler.step(optimer)
+                        scaler.update()
+                        optimer.zero_grad()
+                    else:
+                        torch.nn.utils.clip_grad_norm_(cd_model.parameters(), max_norm=0.5)
+                        optimer.step()
+                        optimer.zero_grad()
                     
                 # Clean up memory after each batch (avoid double deletion)
                 del change

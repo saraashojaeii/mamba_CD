@@ -18,7 +18,7 @@
     "train": {
       "name": "HIUCD-CD-256",
       "datasetroot": "/root/home/pvc/HICD/train",
-      "resolution": 512,
+      "resolution": 256,
       "num_workers": 4,
       "batch_size": 1,
       "use_shuffle": true,
@@ -27,7 +27,7 @@
     "val": {
       "name": "HIUCD-CD-256",
       "datasetroot": "/root/home/pvc/HICD/val",
-      "resolution": 512,
+      "resolution": 256,
       "num_workers": 4,
       "batch_size": 1,
       "use_shuffle": true,
@@ -37,7 +37,7 @@
     "test": {
       "name": "HIUCD-CD-256",
       "datasetroot": "/root/home/pvc/HICD/test",
-      "resolution": 512,
+      "resolution": 256,
       "num_workers": 4,
       "batch_size": 1,
       "use_shuffle": false,
