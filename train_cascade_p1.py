@@ -21,6 +21,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from datetime import datetime
+from tqdm import tqdm
 
 # =============================
 # Run-naming, seed, and results
@@ -395,7 +396,7 @@ if __name__ == '__main__':
             # Set memory fraction to avoid fragmentation (more conservative)
             torch.cuda.set_per_process_memory_fraction(0.8)
             
-            for current_step, train_data in enumerate(train_loader):
+            for current_step, train_data in enumerate(tqdm(train_loader, total=len(train_loader), desc=f"Train {current_epoch}/{opt['train']['n_epoch']}")):
                 # Aggressive memory cleanup at start of each step
                 # torch.cuda.empty_cache()
                 # torch.cuda.synchronize()
@@ -611,7 +612,7 @@ if __name__ == '__main__':
             shape_mismatch_logged = False  # Flag to log shape mismatch only once per epoch
             
             with torch.no_grad():
-                for val_step, val_data in enumerate(val_loader):
+                for val_step, val_data in enumerate(tqdm(val_loader, total=len(val_loader), desc=f"Val {current_epoch}")):
                     val_img1 = val_data['A'].to(device)
                     val_img2 = val_data['B'].to(device)
                     
@@ -759,7 +760,7 @@ if __name__ == '__main__':
             os.makedirs(test_result_path, exist_ok=True)
             
             with torch.no_grad():
-                for current_step, test_data in enumerate(test_loader):
+                for current_step, test_data in enumerate(tqdm(test_loader, total=len(test_loader), desc="Test")):
                     test_img1 = test_data['A'].to(device)
                     test_img2 = test_data['B'].to(device)
                     # Robust label extraction - data automatically on correct device
@@ -774,8 +775,17 @@ if __name__ == '__main__':
                     change = test_data['change'] if 'change' in test_data else None
 
                     outputs = cd_model(test_img1, test_img2)
-                    # Extract all heads
-                    seg_logits_t1, seg_logits_t2, change_pred = outputs
+                    # Extract change logits robustly
+                    if isinstance(outputs, tuple):
+                        change_pred = None
+                        for o in outputs:
+                            if torch.is_tensor(o):
+                                change_pred = o
+                                break
+                        if change_pred is None:
+                            change_pred = outputs[0]
+                    else:
+                        change_pred = outputs
                     # Only use change head for metric and visuals (2-class)
                     # Convert prediction to binary change mask directly
                     G_pred = torch.argmax(change_pred.detach(), dim=1)
@@ -786,7 +796,7 @@ if __name__ == '__main__':
                     pred_np = G_pred.int().cpu().numpy()
                     gt_np = test_change_bin.cpu().numpy().astype(np.uint8)
 
-                    # Optional: log first batch of test predictions (segmentations + probs)
+                    # Optional: log first batch of test predictions (change + prob)
                     if current_step == 0:
                         # Convert input images from normalized [-1, 1] to [0, 255] for visualization
                         test_img_t1 = Metrics.tensor2img(test_data['A'][0:1], out_type=np.uint8, min_max=(-1, 1))
@@ -795,14 +805,6 @@ if __name__ == '__main__':
                         # Change probabilities (class-1 probability)
                         change_probs = torch.softmax(change_pred[0], dim=0)
                         change_prob = change_probs[1].detach().cpu().numpy()
-
-                        # Segmentation predictions and per-pixel confidence (max prob)
-                        pred_seg_t1 = torch.argmax(seg_logits_t1, dim=1)
-                        pred_seg_t2 = torch.argmax(seg_logits_t2, dim=1)
-                        seg_t1_probs = torch.softmax(seg_logits_t1[0], dim=0)  # [C,H,W]
-                        seg_t2_probs = torch.softmax(seg_logits_t2[0], dim=0)
-                        seg_t1_max_prob = torch.max(seg_t1_probs, dim=0).values.detach().cpu().numpy()  # [H,W]
-                        seg_t2_max_prob = torch.max(seg_t2_probs, dim=0).values.detach().cpu().numpy()
                         
                         # Create binary ground truth change (black=0, white=255)
                         test_gt_change_bw = ((test_change_bin[0] > 0).float().cpu().numpy() * 255).astype(np.uint8)
@@ -810,46 +812,16 @@ if __name__ == '__main__':
                         # Create binary change prediction (black=0, white=255)
                         test_pred_change_binary = ((G_pred[0] > 0).detach().cpu().numpy() * 255).astype(np.uint8)
                         
-                        # Handle ground truth segmentation masks
-                        test_seg_t1_np = seg_t1[0].detach().cpu().numpy()
-                        test_seg_t2_np = seg_t2[0].detach().cpu().numpy()
-                        
-                        if test_seg_t1_np.ndim == 3 and test_seg_t1_np.shape[2] == 3:
-                            max_val = test_seg_t1_np.max()
-                            if max_val > 0:
-                                test_gt_seg_t1_img = ((test_seg_t1_np / max_val) * 255).astype(np.uint8)
-                            else:
-                                test_gt_seg_t1_img = test_seg_t1_np.astype(np.uint8)
-                        else:
-                            test_gt_seg_t1_img = create_color_mask(seg_t1[0], num_classes=opt['model']['n_classes'])
-                        
-                        if test_seg_t2_np.ndim == 3 and test_seg_t2_np.shape[2] == 3:
-                            max_val = test_seg_t2_np.max()
-                            if max_val > 0:
-                                test_gt_seg_t2_img = ((test_seg_t2_np / max_val) * 255).astype(np.uint8)
-                            else:
-                                test_gt_seg_t2_img = test_seg_t2_np.astype(np.uint8)
-                        else:
-                            test_gt_seg_t2_img = create_color_mask(seg_t2[0], num_classes=opt['model']['n_classes'])
-                        
                         wandb.log({
                             # Input images
                             "test/input_t1": [wandb.Image(test_img_t1, caption="Test Input Image T1")],
                             "test/input_t2": [wandb.Image(test_img_t2, caption="Test Input Image T2")],
                             
-                            # Predictions with consistent color mapping
-                            "test/pred_seg_t1": [wandb.Image(create_color_mask(pred_seg_t1[0], num_classes=opt['model']['n_classes']), caption="Test Pred Seg T1 (multi-class)")],
-                            "test/pred_seg_t2": [wandb.Image(create_color_mask(pred_seg_t2[0], num_classes=opt['model']['n_classes']), caption="Test Pred Seg T2 (multi-class)")],
+                            # Predictions
                             "test/pred_change": [wandb.Image(test_pred_change_binary, caption="Test Pred Change (binary BW)")],
-                            
-                            # Probability maps
-                            "test/pred_seg_t1_prob": [wandb.Image(seg_t1_max_prob, caption="Test Pred Seg T1 Max Probability")],
-                            "test/pred_seg_t2_prob": [wandb.Image(seg_t2_max_prob, caption="Test Pred Seg T2 Max Probability")],
+                            # Probability map for change
                             "test/pred_change_prob": [wandb.Image(change_prob, caption="Test Pred Change Class-1 Probability")],
-                            
-                            # Ground truths with consistent color mapping
-                            "test/gt_seg_t1": [wandb.Image(test_gt_seg_t1_img, caption="Test GT Seg T1")],
-                            "test/gt_seg_t2": [wandb.Image(test_gt_seg_t2_img, caption="Test GT Seg T2")],
+                            # Ground truth change
                             "test/gt_change": [wandb.Image(test_gt_change_bw, caption="Test GT Change (binary BW)")]
                         })
                     binary_pred = G_pred.int()
