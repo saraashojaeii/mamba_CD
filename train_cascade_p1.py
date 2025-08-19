@@ -183,6 +183,10 @@ if __name__ == '__main__':
                         choices=['train', 'test'], help='Run either train(training + validation) or testing',)
     parser.add_argument('--gpu_ids', type=str, default=None)
     parser.add_argument('-log_eval', action='store_true')
+    # Accept naming-related args so CLI doesn't error (used only for run naming)
+    parser.add_argument('--model', type=str, default=early_args.model, help='Model name (for run naming only)')
+    parser.add_argument('--dataset', type=str, default=early_args.dataset, help='Dataset name (for run naming only)')
+    parser.add_argument('--tag', type=str, default=early_args.tag, help='Optional custom tag (for run naming only)')
     # Accept seed here as well (even though seeding uses early_args)
     parser.add_argument('--seed', type=int, default=None, help='Optional; accepted for compatibility')
     # Limits for overfitting/quick runs
