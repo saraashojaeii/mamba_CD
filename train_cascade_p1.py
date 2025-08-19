@@ -189,6 +189,8 @@ if __name__ == '__main__':
     parser.add_argument('--max_train_batches', type=int, default=0, help='Limit number of training batches per epoch (0 = no limit)')
     parser.add_argument('--max_val_batches', type=int, default=0, help='Limit number of validation batches per epoch (0 = no limit)')
     parser.add_argument('--max_test_batches', type=int, default=0, help='Limit number of test batches (0 = no limit)')
+    # Threshold for converting probs to binary mask (class-1)
+    parser.add_argument('--change_threshold', type=float, default=0.5, help='Probability threshold for change class (class-1) binarization')
 
     # Parse config
     args = parser.parse_args()
@@ -566,8 +568,10 @@ if __name__ == '__main__':
                 epoch_loss += train_loss.item()
 
                 # For metric, use argmax over 2-class change head
-                G_pred = torch.argmax(change_pred, dim=1)
-                binary_pred = G_pred.int()
+                # Probability-based binarization for better alignment with prob maps
+                probs = torch.softmax(change_pred, dim=1)[:, 1, ...]  # class-1 probs
+                thresh = getattr(args, 'change_threshold', 0.5)
+                binary_pred = (probs >= thresh).int()
                 
                 # Ground truth already binary (saved above)
                 gt_np = change_gt.cpu().numpy().astype(np.uint8)
@@ -662,8 +666,9 @@ if __name__ == '__main__':
                     val_loss_total += val_loss.item()
                     val_steps += 1
                     # Predictions for metrics
-                    val_G_pred = torch.argmax(val_change_pred.detach(), dim=1)
-                    val_binary_pred = val_G_pred.int()
+                    val_probs = torch.softmax(val_change_pred.detach(), dim=1)[:, 1, ...]
+                    thresh = getattr(args, 'change_threshold', 0.5)
+                    val_binary_pred = (val_probs >= thresh).int()
                     # Ensure both arrays have the same shape for metric calculation
                     val_gt_np = val_change_bin.cpu().numpy().astype(np.uint8)
                     val_pred_np = val_binary_pred.cpu().numpy()
@@ -809,7 +814,9 @@ if __name__ == '__main__':
                         change_pred = outputs
                     # Only use change head for metric and visuals (2-class)
                     # Convert prediction to binary change mask directly
-                    G_pred = torch.argmax(change_pred.detach(), dim=1)
+                    probs = torch.softmax(change_pred.detach(), dim=1)[:, 1, ...]
+                    thresh = getattr(args, 'change_threshold', 0.5)
+                    G_pred = (probs >= thresh).int()
                     # Normalize GT to binary [B,H,W]
                     test_change_bin = normalize_change_target(seg_t1, seg_t2, change)
                     # Ensure targets are long dtype with values {0,1}
@@ -868,9 +875,7 @@ if __name__ == '__main__':
 
                     img_mode = 'single'
                     if img_mode == 'single':
-                        # Converting to uint8
-                        visuals['pred_cm'] = visuals['pred_cm'] * 2.0 - 1.0
-                        visuals['gt_cm'] = visuals['gt_cm'] * 2.0 - 1.0
+                        # Binary masks already in {0,1}; keep range [0,1] for correct visualization
                         img_A = Metrics.tensor2img(test_data['A'], out_type=np.uint8, min_max=(-1, 1))  # uint8
                         img_B = Metrics.tensor2img(test_data['B'], out_type=np.uint8, min_max=(-1, 1))  # uint8
                         # Handle tensor dimensions properly for visualization
@@ -894,6 +899,9 @@ if __name__ == '__main__':
                         elif pred_tensor.dim() == 2:  # (H, W)
                             pred_tensor = pred_tensor.unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
                         
+                        # Ensure float type for scaling
+                        gt_tensor = gt_tensor.float()
+                        pred_tensor = pred_tensor.float()
                         gt_cm = Metrics.tensor2img(gt_tensor.repeat(1, 3, 1, 1), out_type=np.uint8,
                                                    min_max=(0, 1))  # uint8
                         pred_cm = Metrics.tensor2img(pred_tensor.repeat(1, 3, 1, 1),
@@ -909,9 +917,7 @@ if __name__ == '__main__':
                         Metrics.save_img(
                             gt_cm, '{}/img_gt_cm{}.png'.format(test_result_path, current_step))
                     else:
-                        # grid img
-                        visuals['pred_cm'] = visuals['pred_cm'] * 2.0 - 1.0
-                        visuals['gt_cm'] = visuals['gt_cm'] * 2.0 - 1.0
+                        # grid img (keep masks in [0,1])
                         grid_img = torch.cat((test_data['A'],
                                               test_data['B'],
                                               visuals['pred_cm'].unsqueeze(1).repeat(1, 3, 1, 1),
